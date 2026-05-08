@@ -40,6 +40,11 @@ type orderBook = Record<BalanceKey, {
   }>,
 }>
 
+type Fill = {
+  orderId: string;
+  qty: number;
+}
+
 // --- In-memory state ---
 const USERS: User[] = [];
 const STOCKS = [
@@ -48,7 +53,7 @@ const STOCKS = [
   { id: 3, title: "TATA Steel", symbol: "TATA" },
 ];
 const ORDERS = [];
-const FILLS = [];
+const FILLS: Fill[] = [];
 const BALANCES: Balance = {}; // { userId: { INR: {total, locked}, AXIS: {total, locked}, ... } }
 const ORDERBOOK: orderBook = {
   INR: { bids: {}, asks: {} },
@@ -112,7 +117,7 @@ app.post("/login", async (req, res) => {
 
 // --- Orders ---
 app.post("/order", (req, res) => {
-  // symbol = INR/SOL
+  // symbol = INR/AXIS
   // { userId, side: "BUY"|"SELL", type: "LIMIT"|"MARKET", symbol, price?, qty } from body and user
 
   // 1. validate input + stock exists
@@ -163,15 +168,13 @@ app.post("/order", (req, res) => {
   // 3. run matching engine against opposite side of ORDERBOOK
   if (side === "BUY") {
     let value: number = 0; // value in asks
-    const condition1 = Object.keys(ORDERBOOK[stock].asks[price]).find((key) => price === key);
-    const condition2 = Object.keys(ORDERBOOK[stock].asks[price]).find((key) => key < price);
-  
-    const a = ORDERBOOK[stock].asks[price]
-    
-    if (
-      condition1 ||
-      condition2
-    ) {
+    const asks = ORDERBOOK[stock].asks;
+    const condition1 = Object.keys(asks).find((key) => price === Number(key));
+    const condition2 = Object.keys(asks)
+      .sort((a, b) => Number(a) - Number(b))
+      .find((key) => Number(key) < price);
+      
+    if (condition1 || condition2) {
       if (condition1) {
         value = Number(condition1)
       } else if (condition2) {
@@ -184,23 +187,24 @@ app.post("/order", (req, res) => {
       if (asks?.totalQuantity >= qty) {
         asks?.totalQuantity -= qty;
 
-        asks?.orders.push({
-          createdAt: new Date(),
-          filledQty: qty,
-          orderId,
-          qty,
-          userId
-        })
-
         if (asks?.totalQuantity === 0) {
-          delete ORDERBOOK[stock].asks[value]
+          delete asks
+        } else {
+          asks?.orders.push({
+            createdAt: new Date(),
+            filledQty: qty,
+            orderId,
+            qty,
+            userId
+          })
         }
-      } else if (asks?.totalQuantity <= qty) {
-        // jitna hai utha do
-        asks?.totalQuantity = 0
 
+
+      } else if (asks?.totalQuantity <= qty) {
+        // jitna hai utna do
         const filledQty = qty - asks?.totalQuantity;
         const leftQty = qty - filledQty;
+        asks?.totalQuantity = 0
         
         asks?.orders.push({
           createdAt: new Date(),
@@ -213,13 +217,72 @@ app.post("/order", (req, res) => {
         // bids mein push kro
         ORDERBOOK[stock].bids[value] = { orders: [], totalQuantity: leftQty };
       }
-      
-
     } else {
       // push in the orderbook
+      ORDERBOOK[stock].bids[price] = {
+        orders: [],
+        totalQuantity: qty
+      }
     }
   }
 
+  if (side === "SELL") {
+    const userStockBln = BALANCES[userId][stock].total - BALANCES[userId][stock].locked;
+    
+    if (userStockBln < qty) {
+      res.status(403).json({ message: "insuffescient balance" })
+      return;
+    }
+
+    const bids = ORDERBOOK[stock].bids;
+    const condition1 = Object.keys(bids).find((key) => price === Number(key));
+    const condition2 = Object.keys(bids)
+      .sort((a, b) => Number(b) - Number(a))
+      .find((key) => Number(key) > price);
+
+    let value: number = 0
+      
+    if (condition1) {
+      value = Number(condition1)
+    } else if (condition2) {
+      value = Number(condition2)
+    }
+
+    const finalBids = ORDERBOOK[stock].bids[value];
+    const orderId = crypto.randomUUID();
+
+    if (finalBids?.totalQuantity >= qty) {
+      finalBids?.totalQuantity -= qty
+
+      if (finalBids?.totalQuantity === 0) {
+        delete finalBids
+      } else {
+        finalBids?.orders.push({
+          createdAt: new Date(),
+          filledQty: qty,
+          orderId,
+          qty,
+          userId,
+        })
+      }
+    } else if (finalBids?.totalQuantity <= qty) {
+        // jitna hai utna do
+        
+        const filledQty = qty - finalBids?.totalQuantity;
+        const leftQty = qty - filledQty;
+        finalBids?.totalQuantity = 0
+        
+        finalBids?.orders.push({
+          createdAt: new Date(),
+          filledQty,
+          orderId,
+          qty,
+          userId
+        })
+        // bids mein push kro
+        ORDERBOOK[stock].asks[value] = { orders: [], totalQuantity: leftQty };
+      }
+  }
 
   // 4. write fills to FILLS, update filledQty + status on ORDERS
   // 5. if leftover qty and LIMIT, rest on book; if MARKET, cancel remainder
