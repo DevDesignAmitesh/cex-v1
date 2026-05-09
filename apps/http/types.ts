@@ -5,6 +5,12 @@ export type User = {
   password: string;
 };
 
+export type Stock = {
+  id: string;
+  title: string;
+  symbol: string;
+}
+
 export type BalanceKey = "INR" | "AXIS" | "HDFC" | "TATA";
 
 export type Balance = Record<
@@ -19,11 +25,16 @@ export type Balance = Record<
 >;
 
 export type Order = {
+  id: string;
   userId: string;
+  stockId: string
+  side: "BUY" | "LIMIT";
+  type: "LIMIT" | "MARKET";
   qty: number;
   filledQty: number;
-  orderId: string;
   createdAt: Date;
+  price: number
+  status: "FILLED" | "CANCELLED" | "PARTIAL-FILLED"
 };
 
 export type OrderBook = Record<
@@ -33,21 +44,23 @@ export type OrderBook = Record<
       number,
       {
         totalQuantity: number;
-        orders: Order[];
+        // orders: Order[];
       }
     >;
     asks: Record<
       number,
       {
         totalQuantity: number;
-        orders: Order[];
+        // orders: Order[];
       }
     >;
   }
 >;
 
 export type Fill = {
+  id: string;
+  stockId: string;
   orderId: string;
-  orgQty: number;
-  filledQty: number;
+  price: number;
+  qty: number;
 };

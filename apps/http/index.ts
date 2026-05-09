@@ -11,21 +11,24 @@ import {
   compareUserQtyWithPriceQty,
   rejectOrder,
 } from "./utils";
-import type { Balance, BalanceKey, Fill, OrderBook, User } from "./types";
+import type { Balance, Fill, Order, OrderBook, Stock, User } from "./types";
 export const app = express();
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+if (!JWT_SECRET) throw Error("JWT_SECRET not found");
+
 // --- In-memory state ---
 const USERS: User[] = [];
 let LAST_TRADED_PRICE = 0;
-const STOCKS = [
-  { id: 1, title: "AXIS BANK", symbol: "AXIS" },
-  { id: 2, title: "HDFC BANK", symbol: "HDFC" },
-  { id: 3, title: "TATA Steel", symbol: "TATA" },
+const STOCKS: Stock[] = [
+  { id: "1", title: "AXIS BANK", symbol: "AXIS" },
+  { id: "2", title: "HDFC BANK", symbol: "HDFC" },
+  { id: "3", title: "TATA Steel", symbol: "TATA" },
 ];
 const FILLS: Fill[] = [];
+const ORDERS: Order[] = [];
 const BALANCES: Balance = {}; // { userId: { INR: {total, locked}, AXIS: {total, locked}, ... } }
 const ORDERBOOK: OrderBook = {
   INR: { bids: {}, asks: {} },
@@ -49,7 +52,7 @@ app.post("/signup", async (req, res) => {
   const hashedPassword = await hash(password, 4);
 
   // 3. push to USERS
-  const userId = crypto.randomUUID();
+  let userId = crypto.randomUUID();
   USERS.push({
     id: userId,
     username,
@@ -57,7 +60,12 @@ app.post("/signup", async (req, res) => {
   });
 
   // 4. init BALANCES[userId] with INR: { total: 0, locked: 0 }
-  BALANCES[userId] = { INR: { total: 0, locked: 0 } };
+  BALANCES[userId] = { 
+    INR: { total: 0, locked: 0 },
+    AXIS: { total: 0, locked: 0 },
+    HDFC: { total: 0, locked: 0 },
+    TATA: { total: 0, locked: 0 },
+  };
 
   res.status(201).json({ message: "signup successfull, please signin." });
   return;
@@ -89,9 +97,13 @@ app.post("/login", async (req, res) => {
 
 // --- Orders ---
 app.post("/order", (req, res) => {
-  const { success, data, error } = orderInput.safeParse(req.body);
+  const { success, data, error } = orderInput.safeParse({
+    ...req.body,
+    userId: req.userId,
+  });
 
   if (!success) {
+    console.log("zod error ", error);
     res.status(403).json({ message: "Invalid inputs" });
     return;
   }
@@ -124,26 +136,30 @@ app.post("/order", (req, res) => {
   }
 
   if (type === "MARKET") {
-    let val = 0;
+    let priceOrPriceFromStock = 0;
 
     if (typeof price === "number") {
-      val = price;
+      priceOrPriceFromStock = price;
       userFinalQuantity = price / LAST_TRADED_PRICE;
     }
 
     if (typeof qty === "number") {
       userFinalQuantity = qty;
-      val = qty * LAST_TRADED_PRICE;
+      priceOrPriceFromStock = qty * LAST_TRADED_PRICE;
     }
 
-    const isBalanceAvailable = compareStockOrCurrencyBalance(userBalance, val);
+    const isBalanceAvailable = compareStockOrCurrencyBalance(
+      userBalance, 
+      priceOrPriceFromStock
+    );
 
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
       return;
     }
-    userFinalPrice = val;
-    userBalance.locked += val;
+
+    userFinalPrice = priceOrPriceFromStock;
+    userBalance.locked += priceOrPriceFromStock;
   }
 
   const availablePrice = checkAvailablePriceInOrderBook(
@@ -158,19 +174,19 @@ app.post("/order", (req, res) => {
     return;
   }
 
+  if (!availablePrice && type === "MARKET") {
+    rejectOrder(res);
+    return;
+  }
+
   if (!availablePrice && !ioc && type === "LIMIT") {
     addNewAsksOrBidsInOrderBook(
       side === "BUY" ? "asks" : "bids",
       userFinalPrice,
       ORDERBOOK,
       side === "BUY" ? "INR" : "AXIS",
-      qty!,
+      userFinalQuantity,
     );
-    return;
-  }
-
-  if (!availablePrice && type === "MARKET") {
-    rejectOrder(res);
     return;
   }
 
@@ -198,12 +214,13 @@ app.post("/order", (req, res) => {
       side === "BUY" ? "asks" : "bids"
     ][userFinalPrice];
 
-  order?.orders.push({
+  ORDERS.push({
+    id: orderId,
     createdAt: new Date(),
     filledQty,
-    orderId,
     qty: userFinalQuantity,
     userId,
+    price: userFinalPrice
   });
 
   FILLS.push({
@@ -211,197 +228,46 @@ app.post("/order", (req, res) => {
     filledQty,
     orgQty: userFinalQuantity,
   });
-
+  
   ORDERBOOK[side === "BUY" ? "INR" : "AXIS"][side === "BUY" ? "asks" : "bids"][
     userFinalPrice
   ] = {
-    orders: order?.orders ?? [],
+    // orders: order?.orders ?? [],
     totalQuantity: order?.totalQuantity! - filledQty,
   };
-
+  
   if (order?.totalQuantity === 0) {
     delete ORDERBOOK[side === "BUY" ? "INR" : "AXIS"][
       side === "BUY" ? "asks" : "bids"
     ][userFinalPrice];
   }
-});
-
-app.post("/order", (req, res) => {
-  // symbol = INR/AXIS
-  // { userId, side: "BUY"|"SELL", type: "LIMIT"|"MARKET", symbol, price?, qty } from body and user
-
-  // 1. validate input + stock exists
-  const { data, success, error } = orderInput.safeParse(req.body);
-
-  if (!success) {
-    console.log("zod error ", error);
-    res.status(403).json({ message: "invalid inputs" });
-    return;
+  
+  if (!isPriceQtyHigh && type === "LIMIT") {
+    addNewAsksOrBidsInOrderBook(
+      side === "BUY" ? "asks" : "bids",
+      userFinalPrice,
+      ORDERBOOK,
+      side === "BUY" ? "INR" : "AXIS",
+      leftQty,
+    );    
   }
 
-  const {
-    qty,
-    side,
-    symbol,
-    // type,
-    userId,
-    price,
-  } = data;
-
-  const stock = symbol.split("/")[1] as BalanceKey;
-
-  // 2. check + lock balance (INR for BUY, stock for SELL)
-  if (side === "BUY") {
-    // is the user have enough INR
-    const userBalance =
-      BALANCES[userId]?.INR.total - BALANCES[userId]?.INR.locked;
-
-    if (userBalance < price * qty) {
-      res.status(403).json({ message: "insuffecient balance" });
-      return;
-    }
-
-    BALANCES[userId]?.INR.locked += price * qty;
-  }
-
-  if (side === "SELL") {
-    const userBalance =
-      BALANCES[userId][stock].total - BALANCES[userId][stock].locked;
-
-    if (userBalance < qty) {
-      res.status(403).json({ message: "insuffecient balance" });
-      return;
-    }
-
-    BALANCES[userId][stock].locked += qty;
-  }
-
-  // 3. run matching engine against opposite side of ORDERBOOK
-  if (side === "BUY") {
-    let value: number = 0; // value in asks
-    const asks = ORDERBOOK[stock].asks;
-    const condition1 = Object.keys(asks).find((key) => price === Number(key));
-    const condition2 = Object.keys(asks)
-      .sort((a, b) => Number(a) - Number(b))
-      .find((key) => Number(key) < price);
-
-    if (condition1 || condition2) {
-      if (condition1) {
-        value = Number(condition1);
-      } else if (condition2) {
-        value = Number(condition2);
-      }
-
-      const asks = ORDERBOOK[stock].asks[value];
-      const orderId = crypto.randomUUID();
-
-      if (asks?.totalQuantity >= qty) {
-        asks?.totalQuantity -= qty;
-
-        if (asks?.totalQuantity === 0) {
-          delete asks;
-        } else {
-          asks?.orders.push({
-            createdAt: new Date(),
-            filledQty: qty,
-            orderId,
-            qty,
-            userId,
-          });
-        }
-      } else if (asks?.totalQuantity <= qty) {
-        // jitna hai utna do
-        const filledQty = qty - asks?.totalQuantity;
-        const leftQty = qty - filledQty;
-        asks?.totalQuantity = 0;
-
-        asks?.orders.push({
-          createdAt: new Date(),
-          filledQty,
-          orderId,
-          qty,
-          userId,
-        });
-
-        // bids mein push kro
-        ORDERBOOK[stock].bids[value] = { orders: [], totalQuantity: leftQty };
-      }
-    } else {
-      // push in the orderbook
-      ORDERBOOK[stock].bids[price] = {
-        orders: [],
-        totalQuantity: qty,
-      };
-    }
-  }
-
-  if (side === "SELL") {
-    const userStockBln =
-      BALANCES[userId][stock].total - BALANCES[userId][stock].locked;
-
-    if (userStockBln < qty) {
-      res.status(403).json({ message: "insuffescient balance" });
-      return;
-    }
-
-    const bids = ORDERBOOK[stock].bids;
-    const condition1 = Object.keys(bids).find((key) => price === Number(key));
-    const condition2 = Object.keys(bids)
-      .sort((a, b) => Number(b) - Number(a))
-      .find((key) => Number(key) > price);
-
-    let value: number = 0;
-
-    if (condition1) {
-      value = Number(condition1);
-    } else if (condition2) {
-      value = Number(condition2);
-    }
-
-    const finalBids = ORDERBOOK[stock].bids[value];
-    const orderId = crypto.randomUUID();
-
-    if (finalBids?.totalQuantity >= qty) {
-      finalBids?.totalQuantity -= qty;
-
-      if (finalBids?.totalQuantity === 0) {
-        delete finalBids;
-      } else {
-        finalBids?.orders.push({
-          createdAt: new Date(),
-          filledQty: qty,
-          orderId,
-          qty,
-          userId,
-        });
-      }
-    } else if (finalBids?.totalQuantity <= qty) {
-      // jitna hai utna do
-
-      const filledQty = qty - finalBids?.totalQuantity;
-      const leftQty = qty - filledQty;
-      finalBids?.totalQuantity = 0;
-
-      finalBids?.orders.push({
-        createdAt: new Date(),
-        filledQty,
-        orderId,
-        qty,
-        userId,
-      });
-      // bids mein push kro
-      ORDERBOOK[stock].asks[value] = { orders: [], totalQuantity: leftQty };
-    }
-  }
-
-  // 4. write fills to FILLS, update filledQty + status on ORDERS
-  // 5. if leftover qty and LIMIT, rest on book; if MARKET, cancel remainder
-  // 6. settle balances on each fill (move locked -> other asset's available)
+  LAST_TRADED_PRICE = userFinalPrice;
 });
 
 app.delete("/order/:orderId", (req, res) => {
+  const { orderId } = req.params;
+  const userId = req.userId;
   // 1. find order, check ownership
+  const order = ORDERS.find((ord) => ord.id === orderId || ord.userId === userId);
+  if (!order) {
+    res.status(403).json({ message: "Order not found or not belongs to you." })
+    return;
+  }
+  
   // 2. remove from ORDERBOOK price level
+  ORDERBOOK.
+  
   // 3. unlock remaining reserved balance
   // 4. mark status = CANCELLED
 });

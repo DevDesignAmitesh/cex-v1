@@ -65,7 +65,7 @@ export function addNewAsksOrBidsInOrderBook(
   leftQty: number,
 ) {
   orderbook[balanceKey][type][price] = {
-    orders: [],
+    // orders: [],
     totalQuantity: leftQty,
   };
 }
