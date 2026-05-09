@@ -27,14 +27,14 @@ export type Balance = Record<
 export type Order = {
   id: string;
   userId: string;
-  stockId: string
-  side: "BUY" | "LIMIT";
-  type: "LIMIT" | "MARKET";
+  market: BalanceKey
+  price: number;
   qty: number;
+  type: "LIMIT" | "MARKET";
+  side: "BUY" | "SELL";
   filledQty: number;
-  createdAt: Date;
-  price: number
   status: "FILLED" | "CANCELLED" | "PARTIAL-FILLED"
+  createdAt: Date;
 };
 
 export type OrderBook = Record<
@@ -54,13 +54,18 @@ export type OrderBook = Record<
         // orders: Order[];
       }
     >;
+    lastTradedPrice: number
   }
 >;
 
 export type Fill = {
   id: string;
-  stockId: string;
-  orderId: string;
-  price: number;
   qty: number;
+  type: "MAKER" | "TAKER";
+  side: "BUY" | "SELL";
+  userId: string;
+  price: number;
+  asset: BalanceKey;
+  orderId: string;
+  createdAt: Date
 };
