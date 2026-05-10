@@ -1,6 +1,5 @@
 import type {
   Balance,
-  BalanceKey,
   Fill,
   Order,
   OrderBook,
@@ -125,10 +124,12 @@ export function order({
   balances,
   orders,
   fills,
+  total,
 }: {
   userId: string;
   userQty: number;
   userPrice: number;
+  total: number;
   ioc: boolean;
   res: Response;
   type: "LIMIT" | "MARKET";
@@ -140,6 +141,8 @@ export function order({
 }) {
   console.log("runninggg");
 
+  let totalSpend = total
+  
   const availablePrice = checkAvailablePriceInOrderBook(
     orderBook,
     userPrice,
@@ -264,6 +267,8 @@ export function order({
     console.log("leftQty ", leftQty);
     console.log("filledQty ", filledQty);
 
+    totalSpend += userQty * keyPrice;
+    
     if (filledQty !== 0) {
       order({
         balances,
@@ -274,6 +279,7 @@ export function order({
         res,
         side,
         type,
+        total: totalSpend,
         userId,
         userPrice,
         userQty: leftQty,
@@ -289,7 +295,7 @@ export function order({
     return {
       orderId,
       filledQty: userQty,
-      totalPrice: userQty * userPrice,
+      totalPrice: totalSpend,
     };
   }
 
@@ -337,10 +343,12 @@ export function order({
 
     orderBook["AXIS"].lastTradedPrice = userPrice;
 
+    totalSpend += userQty * keyPrice;
+    
     return {
       orderId,
       filledQty: userQty,
-      totalPrice: userQty * userPrice,
+      totalPrice: totalSpend
     };
   }
 }

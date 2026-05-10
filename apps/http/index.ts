@@ -2,13 +2,7 @@ import express from "express";
 import { hash, compare } from "bcryptjs";
 import { sign } from "jsonwebtoken";
 import { orderInput } from "./validate";
-import {
-  addNewAsksOrBidsInOrderBook,
-  checkAvailablePriceInOrderBook,
-  compareStockOrCurrencyBalance,
-  order,
-  rejectOrder,
-} from "./utils";
+import { compareStockOrCurrencyBalance, order, rejectOrder } from "./utils";
 import type { Balance, Fill, Order, OrderBook, Stock, User } from "./types";
 
 export const app = express();
@@ -57,12 +51,12 @@ app.post("/signup", async (req, res) => {
   });
 
   // 4. init BALANCES[userId] with INR: { total: 0, locked: 0 }
-  BALANCES.set(userId, { 
+  BALANCES.set(userId, {
     INR: { total: 0, locked: 0 },
     AXIS: { total: 0, locked: 0 },
     HDFC: { total: 0, locked: 0 },
     TATA: { total: 0, locked: 0 },
-  })
+  });
 
   res.status(201).json({ message: "signup successfull, please signin." });
   return;
@@ -94,7 +88,6 @@ app.post("/login", async (req, res) => {
 
 // --- Orders ---
 app.post("/order", (req, res) => {
-
   const { success, data, error } = orderInput.safeParse(req.body);
 
   if (!success) {
@@ -105,9 +98,11 @@ app.post("/order", (req, res) => {
 
   const { ioc, side, symbol, type, userId, price, qty } = data;
 
-  const userBalance = BALANCES.get(userId)?.[side === "BUY" ? "INR" : "AXIS"] || {
+  const userBalance = BALANCES.get(userId)?.[
+    side === "BUY" ? "INR" : "AXIS"
+  ] || {
     total: 10000,
-    locked: 0
+    locked: 0,
   };
   let userFinalPrice = 0;
   let userFinalQuantity = 0;
@@ -123,7 +118,7 @@ app.post("/order", (req, res) => {
       side === "BUY" ? price : qty,
     );
 
-    console.log("isBalanceAvailable ", isBalanceAvailable)
+    console.log("isBalanceAvailable ", isBalanceAvailable);
 
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
@@ -134,7 +129,7 @@ app.post("/order", (req, res) => {
     userBalance.locked += price * qty;
     userFinalQuantity = qty;
   }
-  
+
   if (type === "MARKET") {
     let priceOrPriceFromStock = 0;
 
@@ -149,12 +144,12 @@ app.post("/order", (req, res) => {
     }
 
     const isBalanceAvailable = compareStockOrCurrencyBalance(
-      userBalance, 
-      priceOrPriceFromStock
+      userBalance,
+      priceOrPriceFromStock,
     );
 
-    console.log("isBalanceAvailable ", isBalanceAvailable)
-    
+    console.log("isBalanceAvailable ", isBalanceAvailable);
+
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
       return;
@@ -163,7 +158,7 @@ app.post("/order", (req, res) => {
     userFinalPrice = priceOrPriceFromStock;
     userBalance.locked += priceOrPriceFromStock;
   }
-  
+
   const orderRes = order({
     balances: BALANCES,
     fills: FILLS,
@@ -176,11 +171,12 @@ app.post("/order", (req, res) => {
     userId,
     userPrice: userFinalPrice,
     userQty: userFinalQuantity,
+    total: 0,
   });
 
   console.log("ORDERBOOK ", ORDERBOOK.AXIS);
-  console.log("orderRes ", orderRes)
-  
+  console.log("orderRes ", orderRes);
+
   if (orderRes === null) {
     rejectOrder(res);
     return;
@@ -188,11 +184,11 @@ app.post("/order", (req, res) => {
 
   if (orderRes === true) {
     res.status(201).json({
-      message: "order added in orderbook"
-    })
+      message: "order added in orderbook",
+    });
     return;
   }
-  
+
   return res.status(201).json(orderRes);
 });
 
@@ -200,15 +196,17 @@ app.delete("/order/:orderId", (req, res) => {
   const { orderId } = req.params;
   const userId = req.userId;
   // 1. find order, check ownership
-  const order = ORDERS.find((ord) => ord.id === orderId || ord.userId === userId);
+  const order = ORDERS.find(
+    (ord) => ord.id === orderId || ord.userId === userId,
+  );
   if (!order) {
-    res.status(403).json({ message: "Order not found or not belongs to you." })
+    res.status(403).json({ message: "Order not found or not belongs to you." });
     return;
   }
-  
+
   // 2. remove from ORDERBOOK price level
   // ORDERBOOK.
-  
+
   // 3. unlock remaining reserved balance
   // 4. mark status = CANCELLED
 });
