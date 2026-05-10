@@ -91,7 +91,6 @@ app.post("/order", (req, res) => {
   const { success, data, error } = orderInput.safeParse(req.body);
 
   if (!success) {
-    console.log("zod error ", error);
     res.status(403).json({ message: "Invalid inputs" });
     return;
   }
@@ -118,8 +117,6 @@ app.post("/order", (req, res) => {
       side === "BUY" ? price : qty,
     );
 
-    console.log("isBalanceAvailable ", isBalanceAvailable);
-
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
       return;
@@ -131,6 +128,11 @@ app.post("/order", (req, res) => {
   }
 
   if (type === "MARKET") {
+    if (price === undefined && qty === undefined) {
+      res.status(403).json({ message: "Invalid inputs" });
+      return;
+    }
+
     let priceOrPriceFromStock = 0;
 
     if (typeof price === "number") {
@@ -147,8 +149,6 @@ app.post("/order", (req, res) => {
       userBalance,
       priceOrPriceFromStock,
     );
-
-    console.log("isBalanceAvailable ", isBalanceAvailable);
 
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
@@ -174,14 +174,13 @@ app.post("/order", (req, res) => {
     total: 0,
   });
 
-  console.log("ORDERBOOK ", ORDERBOOK.AXIS);
-  console.log("orderRes ", orderRes);
+  console.log("order book ", ORDERBOOK.AXIS);
 
   if (orderRes === null) {
     rejectOrder(res);
     return;
   }
-
+  
   if (orderRes === true) {
     res.status(201).json({
       message: "order added in orderbook",
@@ -235,4 +234,4 @@ app.get("/balance", (req, res) => {
   // return BALANCES[userId] for the authed user
 });
 
-app.listen(3000, () => console.log("CEX running on :3000"));
+app.listen(3000, () => console.log("CEX is running at :3000"))

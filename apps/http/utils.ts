@@ -1,10 +1,4 @@
-import type {
-  Balance,
-  Fill,
-  Order,
-  OrderBook,
-  OrderBookKey,
-} from "./types";
+import type { Balance, Fill, Order, OrderBook, OrderBookKey } from "./types";
 import type { Response } from "express";
 import fs from "fs";
 
@@ -27,60 +21,33 @@ export function checkAvailablePriceInOrderBook(
   const data = orderbook[balanceKey][type];
   const stringifiedPrice = String(price);
   let key: number = 0;
-  let keyPrice = 0;
   const keys = Object.keys(data);
 
-  console.log("keys ", keys)
-  
-
-  if (Object.keys(data).find((key) => stringifiedPrice === key)) {
-    console.log(
-      "1 ",
-      Object.keys(data).find((key) => stringifiedPrice === key),
-    );
-    key = Number(Object.keys(data).find((key) => stringifiedPrice === key));
-
-    console.log("key ", key)
-    console.log("keyPrice ", keyPrice)
+  if (keys.find((key) => stringifiedPrice === key)) {
+    key = Number(keys.find((key) => stringifiedPrice === key));
 
     return { keyPrice: key, qty: data[key]!.totalQuantity };
   }
 
   if (type === "asks") {
-    if (Object.keys(data).find((key) => key < stringifiedPrice)) {
-      console.log(
-        "2 ",
-        Object.keys(data).find((key) => key < stringifiedPrice),
-      );
-      key = Number(Object.keys(data).find((key) => key < stringifiedPrice));
-      console.log("key ", key)
-      console.log("keyPrice ", keyPrice)
+    if (keys.find((key) => key < stringifiedPrice)) {
+      key = Number(keys.find((key) => key < stringifiedPrice));
 
       return { keyPrice: key, qty: data[key]!.totalQuantity };
     }
-
   }
 
   if (type === "bids") {
     if (
-      Object.keys(data)
+      keys
         .sort((a, b) => Number(b) - Number(a))
         .find((key) => key > stringifiedPrice)
     ) {
-      console.log(
-        "3 ",
-        Object.keys(data)
-          .sort((a, b) => Number(b) - Number(a))
-          .find((key) => key > stringifiedPrice),
-      );
       key = Number(
-        Object.keys(data)
+        keys
           .sort((a, b) => Number(b) - Number(a))
           .find((key) => key > stringifiedPrice),
       );
-      console.log("key ", key)
-      console.log("keyPrice ", keyPrice)
-
 
       return { keyPrice: key, qty: data[key]!.totalQuantity };
     }
@@ -139,10 +106,8 @@ export function order({
   orders: Order[];
   fills: Fill[];
 }) {
-  console.log("runninggg");
+  let totalSpend = total;
 
-  let totalSpend = total
-  
   const availablePrice = checkAvailablePriceInOrderBook(
     orderBook,
     userPrice,
@@ -168,7 +133,6 @@ export function order({
       "AXIS",
       userQty,
     );
-    console.log("orderbook ", orderBook.AXIS);
     return true;
   }
 
@@ -232,13 +196,15 @@ export function order({
   }
 
   if (!isPriceQtyHigh && type === "LIMIT") {
-    const filledQty = userQty - qty!;
-    const leftQty = userQty - filledQty;
+    const leftQty = userQty - qty!;
 
+    console.log("qty ", qty);
+    console.log("leftQty ", leftQty);
+    
     orders.push({
       id: orderId,
       createdAt: new Date(),
-      filledQty,
+      filledQty: qty,
       qty: userQty,
       userId,
       price: userPrice,
@@ -264,12 +230,9 @@ export function order({
 
     delete orderBook["AXIS"][side === "BUY" ? "asks" : "bids"][keyPrice];
 
-    console.log("leftQty ", leftQty);
-    console.log("filledQty ", filledQty);
-
     totalSpend += userQty * keyPrice;
-    
-    if (filledQty !== 0) {
+
+    if (leftQty !== 0) {
       order({
         balances,
         fills,
@@ -287,8 +250,6 @@ export function order({
     }
 
     orderBook["AXIS"].lastTradedPrice = userPrice;
-
-    console.log("reached hereee");
 
     fs.writeFileSync("orderbook.txt", JSON.stringify(orderBook));
 
@@ -344,11 +305,11 @@ export function order({
     orderBook["AXIS"].lastTradedPrice = userPrice;
 
     totalSpend += userQty * keyPrice;
-    
+
     return {
       orderId,
       filledQty: userQty,
-      totalPrice: totalSpend
+      totalPrice: totalSpend,
     };
   }
 }
