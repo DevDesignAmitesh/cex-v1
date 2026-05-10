@@ -6,6 +6,6 @@ export const orderInput = z.object({
   symbol: z.string().includes("/"),
   price: z.number().optional(),
   qty: z.number().optional(),
-  userId: z.uuid(),
+  userId: z.string(),
   ioc: z.boolean().default(false),
 })

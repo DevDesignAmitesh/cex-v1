@@ -1,0 +1,1 @@
+{"AXIS":{"bids":{},"asks":{"120":{"totalQuantity":2}},"lastTradedPrice":150},"HDFC":{"bids":{},"asks":{},"lastTradedPrice":0},"TATA":{"bids":{},"asks":{},"lastTradedPrice":0}}

@@ -1,5 +1,3 @@
-// video timestamps => 1 hour 33 minutes.
-
 import express from "express";
 import { hash, compare } from "bcryptjs";
 import { sign } from "jsonwebtoken";
@@ -8,11 +6,11 @@ import {
   addNewAsksOrBidsInOrderBook,
   checkAvailablePriceInOrderBook,
   compareStockOrCurrencyBalance,
-  compareUserQtyWithPriceQty,
   order,
   rejectOrder,
 } from "./utils";
 import type { Balance, Fill, Order, OrderBook, Stock, User } from "./types";
+
 export const app = express();
 app.use(express.json());
 
@@ -31,7 +29,6 @@ const FILLS: Fill[] = [];
 const ORDERS: Order[] = [];
 const BALANCES: Balance = new Map(); // { userId: { INR: {total, locked}, AXIS: {total, locked}, ... } }
 const ORDERBOOK: OrderBook = {
-  INR: { bids: {}, asks: {}, lastTradedPrice: 0 },
   AXIS: { bids: {}, asks: {}, lastTradedPrice: 0 },
   HDFC: { bids: {}, asks: {}, lastTradedPrice: 0 },
   TATA: { bids: {}, asks: {}, lastTradedPrice: 0 },
@@ -97,10 +94,8 @@ app.post("/login", async (req, res) => {
 
 // --- Orders ---
 app.post("/order", (req, res) => {
-  const { success, data, error } = orderInput.safeParse({
-    ...req.body,
-    userId: req.userId,
-  });
+
+  const { success, data, error } = orderInput.safeParse(req.body);
 
   if (!success) {
     console.log("zod error ", error);
@@ -110,7 +105,10 @@ app.post("/order", (req, res) => {
 
   const { ioc, side, symbol, type, userId, price, qty } = data;
 
-  const userBalance = BALANCES.get(userId)![side === "BUY" ? "INR" : "AXIS"];
+  const userBalance = BALANCES.get(userId)?.[side === "BUY" ? "INR" : "AXIS"] || {
+    total: 10000,
+    locked: 0
+  };
   let userFinalPrice = 0;
   let userFinalQuantity = 0;
 
@@ -125,6 +123,8 @@ app.post("/order", (req, res) => {
       side === "BUY" ? price : qty,
     );
 
+    console.log("isBalanceAvailable ", isBalanceAvailable)
+
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
       return;
@@ -134,20 +134,18 @@ app.post("/order", (req, res) => {
     userBalance.locked += price * qty;
     userFinalQuantity = qty;
   }
-
-  const LAST_TRADED_PRICE = ORDERBOOK["AXIS"].lastTradedPrice;
   
   if (type === "MARKET") {
     let priceOrPriceFromStock = 0;
 
     if (typeof price === "number") {
       priceOrPriceFromStock = price;
-      userFinalQuantity = price / LAST_TRADED_PRICE;
+      userFinalQuantity = price / ORDERBOOK["AXIS"].lastTradedPrice;
     }
 
     if (typeof qty === "number") {
       userFinalQuantity = qty;
-      priceOrPriceFromStock = qty * LAST_TRADED_PRICE;
+      priceOrPriceFromStock = qty * ORDERBOOK["AXIS"].lastTradedPrice;
     }
 
     const isBalanceAvailable = compareStockOrCurrencyBalance(
@@ -155,6 +153,8 @@ app.post("/order", (req, res) => {
       priceOrPriceFromStock
     );
 
+    console.log("isBalanceAvailable ", isBalanceAvailable)
+    
     if (!isBalanceAvailable) {
       res.status(400).json({ message: "Insuffecient balance." });
       return;
@@ -163,42 +163,13 @@ app.post("/order", (req, res) => {
     userFinalPrice = priceOrPriceFromStock;
     userBalance.locked += priceOrPriceFromStock;
   }
-
-  const availablePrice = checkAvailablePriceInOrderBook(
-    ORDERBOOK,
-    userFinalPrice,
-    side === "BUY" ? "INR" : "AXIS",
-    side === "BUY" ? "asks" : "bids",
-  );
-
-  if (!availablePrice && ioc) {
-    rejectOrder(res);
-    return;
-  }
-
-  if (!availablePrice && type === "MARKET") {
-    rejectOrder(res);
-    return;
-  }
-
-  if (!availablePrice && type === "LIMIT") {
-    addNewAsksOrBidsInOrderBook(
-      side === "BUY" ? "asks" : "bids",
-      userFinalPrice,
-      ORDERBOOK,
-      side === "BUY" ? "INR" : "AXIS",
-      userFinalQuantity,
-    );
-    return;
-  }
   
-  order({
+  const orderRes = order({
     balances: BALANCES,
     fills: FILLS,
     ioc,
     orderBook: ORDERBOOK,
     orders: ORDERS,
-    priceQty: availablePrice?.totalQuantity!,
     res,
     side,
     type,
@@ -206,6 +177,23 @@ app.post("/order", (req, res) => {
     userPrice: userFinalPrice,
     userQty: userFinalQuantity,
   });
+
+  console.log("ORDERBOOK ", ORDERBOOK.AXIS);
+  console.log("orderRes ", orderRes)
+  
+  if (orderRes === null) {
+    rejectOrder(res);
+    return;
+  }
+
+  if (orderRes === true) {
+    res.status(201).json({
+      message: "order added in orderbook"
+    })
+    return;
+  }
+  
+  return res.status(201).json(orderRes);
 });
 
 app.delete("/order/:orderId", (req, res) => {

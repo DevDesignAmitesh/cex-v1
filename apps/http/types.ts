@@ -37,8 +37,10 @@ export type Order = {
   createdAt: Date;
 };
 
+export type OrderBookKey = "AXIS" | "HDFC" | "TATA";
+
 export type OrderBook = Record<
-  BalanceKey,
+  OrderBookKey,
   {
     bids: Record<
       number,
