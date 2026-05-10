@@ -1,4 +1,4 @@
-import type { BalanceKey, OrderBook } from "./types";
+import type { Balance, BalanceKey, Fill, Order, OrderBook } from "./types";
 import type { Response } from "express";
 
 export function compareStockOrCurrencyBalance(
@@ -65,11 +65,199 @@ export function addNewAsksOrBidsInOrderBook(
   leftQty: number,
 ) {
   orderbook[balanceKey][type][price] = {
-    // orders: [],
     totalQuantity: leftQty,
   };
 }
 
 export function compareUserQtyWithPriceQty(userQty: number, priceQty: number) {
   return priceQty > userQty;
+}
+
+export function order({
+  ioc,
+  priceQty,
+  res,
+  type,
+  userQty,
+  userPrice,
+  userId,
+  side,
+  orderBook,
+  balances,
+  orders,
+  fills,
+}: {
+  userId: string;
+  userQty: number;
+  userPrice: number;
+  priceQty: number;
+  ioc: boolean;
+  res: Response;
+  type: "LIMIT" | "MARKET";
+  side: "BUY" | "SELL";
+  orderBook: OrderBook;
+  balances: Balance;
+  orders: Order[];
+  fills: Fill[];
+}) {
+  const orderId = crypto.randomUUID();
+
+  const isPriceQtyHigh = compareUserQtyWithPriceQty(userQty, priceQty);
+
+  if (!isPriceQtyHigh && ioc) {
+    rejectOrder(res);
+    return;
+  }
+
+  if (!isPriceQtyHigh && type === "MARKET") {
+    const filledQty = userQty - priceQty;
+    const leftQty = userQty - filledQty;
+    const priceOfLeftQty = leftQty * userPrice;
+
+    orders.push({
+      id: orderId,
+      createdAt: new Date(),
+      filledQty,
+      qty: userQty,
+      userId,
+      price: userPrice,
+      market: "AXIS",
+      side,
+      status: "FILLED",
+      type,
+    });
+
+    const fillId = crypto.randomUUID();
+
+    fills.push({
+      id: fillId,
+      orderId,
+      userId,
+      price: userPrice,
+      qty: userQty,
+      side,
+      asset: "AXIS",
+      type: "MAKER",
+      createdAt: new Date(),
+    });
+
+    delete orderBook[side === "BUY" ? "INR" : "AXIS"][
+      side === "BUY" ? "asks" : "bids"
+    ][userPrice];
+
+    const userBalance = balances.get(userId)!;
+
+    balances.set(userId, {
+      ...userBalance,
+      AXIS: {
+        locked: userBalance.AXIS.locked + priceOfLeftQty,
+        total: userBalance.AXIS.total,
+      },
+    });
+    rejectOrder(res);
+    return;
+  }
+
+  if (!isPriceQtyHigh && type === "LIMIT") {
+    const filledQty = userQty - priceQty;
+    const leftQty = userQty - filledQty;
+
+    orders.push({
+      id: orderId,
+      createdAt: new Date(),
+      filledQty,
+      qty: userQty,
+      userId,
+      price: userPrice,
+      market: "AXIS",
+      side,
+      status: "FILLED",
+      type,
+    });
+
+    const fillId = crypto.randomUUID();
+
+    fills.push({
+      id: fillId,
+      orderId,
+      userId,
+      price: userPrice,
+      qty: userQty,
+      side,
+      asset: "AXIS",
+      type: "MAKER",
+      createdAt: new Date(),
+    });
+
+    delete orderBook[side === "BUY" ? "INR" : "AXIS"][
+      side === "BUY" ? "asks" : "bids"
+    ][userPrice];
+
+    order({
+      balances,
+      fills,
+      ioc,
+      orderBook,
+      orders,
+      priceQty: leftQty,
+      res,
+      side,
+      type,
+      userId,
+      userPrice,
+      userQty,
+    });
+  }
+
+  if (isPriceQtyHigh) {
+    const order =
+      orderBook[side === "BUY" ? "INR" : "AXIS"][
+        side === "BUY" ? "asks" : "bids"
+      ][userPrice];
+
+    orders.push({
+      id: orderId,
+      createdAt: new Date(),
+      filledQty: userQty,
+      qty: userQty,
+      userId,
+      price: userPrice,
+      market: "AXIS",
+      side,
+      status: "FILLED",
+      type,
+    });
+
+    const fillId = crypto.randomUUID();
+
+    fills.push({
+      id: fillId,
+      orderId,
+      userId,
+      price: userPrice,
+      qty: userQty,
+      side,
+      asset: "AXIS",
+      type: "MAKER",
+      createdAt: new Date(),
+    });
+
+    orderBook[side === "BUY" ? "INR" : "AXIS"][
+      side === "BUY" ? "asks" : "bids"
+    ][userPrice] = {
+      totalQuantity: order?.totalQuantity! - userQty,
+    };
+
+    if (
+      orderBook[side === "BUY" ? "INR" : "AXIS"][
+        side === "BUY" ? "asks" : "bids"
+      ][userPrice]?.totalQuantity === 0
+    ) {
+      delete orderBook[side === "BUY" ? "INR" : "AXIS"][
+        side === "BUY" ? "asks" : "bids"
+      ][userPrice];
+    }
+  }
+
+  orderBook["AXIS"].lastTradedPrice = userPrice;
 }

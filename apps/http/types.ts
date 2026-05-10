@@ -13,7 +13,7 @@ export type Stock = {
 
 export type BalanceKey = "INR" | "AXIS" | "HDFC" | "TATA";
 
-export type Balance = Record<
+export type Balance = Map<
   string,
   Record<
     BalanceKey,

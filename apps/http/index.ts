@@ -9,6 +9,7 @@ import {
   checkAvailablePriceInOrderBook,
   compareStockOrCurrencyBalance,
   compareUserQtyWithPriceQty,
+  order,
   rejectOrder,
 } from "./utils";
 import type { Balance, Fill, Order, OrderBook, Stock, User } from "./types";
@@ -21,7 +22,6 @@ if (!JWT_SECRET) throw Error("JWT_SECRET not found");
 
 // --- In-memory state ---
 const USERS: User[] = [];
-let LAST_TRADED_PRICE = 0;
 const STOCKS: Stock[] = [
   { id: "1", title: "AXIS BANK", symbol: "AXIS" },
   { id: "2", title: "HDFC BANK", symbol: "HDFC" },
@@ -29,7 +29,7 @@ const STOCKS: Stock[] = [
 ];
 const FILLS: Fill[] = [];
 const ORDERS: Order[] = [];
-const BALANCES: Balance = {}; // { userId: { INR: {total, locked}, AXIS: {total, locked}, ... } }
+const BALANCES: Balance = new Map(); // { userId: { INR: {total, locked}, AXIS: {total, locked}, ... } }
 const ORDERBOOK: OrderBook = {
   INR: { bids: {}, asks: {}, lastTradedPrice: 0 },
   AXIS: { bids: {}, asks: {}, lastTradedPrice: 0 },
@@ -60,12 +60,12 @@ app.post("/signup", async (req, res) => {
   });
 
   // 4. init BALANCES[userId] with INR: { total: 0, locked: 0 }
-  BALANCES[userId] = { 
+  BALANCES.set(userId, { 
     INR: { total: 0, locked: 0 },
     AXIS: { total: 0, locked: 0 },
     HDFC: { total: 0, locked: 0 },
     TATA: { total: 0, locked: 0 },
-  };
+  })
 
   res.status(201).json({ message: "signup successfull, please signin." });
   return;
@@ -110,7 +110,7 @@ app.post("/order", (req, res) => {
 
   const { ioc, side, symbol, type, userId, price, qty } = data;
 
-  const userBalance = BALANCES[userId]![side === "BUY" ? "INR" : "AXIS"];
+  const userBalance = BALANCES.get(userId)![side === "BUY" ? "INR" : "AXIS"];
   let userFinalPrice = 0;
   let userFinalQuantity = 0;
 
@@ -135,6 +135,8 @@ app.post("/order", (req, res) => {
     userFinalQuantity = qty;
   }
 
+  const LAST_TRADED_PRICE = ORDERBOOK["AXIS"].lastTradedPrice;
+  
   if (type === "MARKET") {
     let priceOrPriceFromStock = 0;
 
@@ -169,44 +171,17 @@ app.post("/order", (req, res) => {
     side === "BUY" ? "asks" : "bids",
   );
 
-  const orderId = crypto.randomUUID();
-
   if (!availablePrice && ioc) {
-    ORDERS.push({
-      id: orderId,
-      createdAt: new Date(),
-      filledQty: 0,
-      qty: userFinalQuantity,
-      userId,
-      price: userFinalPrice,
-      market: "AXIS",
-      side,
-      status: "CANCELLED",
-      type,
-    });
     rejectOrder(res);
     return;
   }
 
   if (!availablePrice && type === "MARKET") {
-    ORDERS.push({
-      id: orderId,
-      createdAt: new Date(),
-      filledQty: 0,
-      qty: userFinalQuantity,
-      userId,
-      price: userFinalPrice,
-      market: "AXIS",
-      side,
-      status: "CANCELLED",
-      type,
-    });
-
     rejectOrder(res);
     return;
   }
 
-  if (!availablePrice && !ioc && type === "LIMIT") {
+  if (!availablePrice && type === "LIMIT") {
     addNewAsksOrBidsInOrderBook(
       side === "BUY" ? "asks" : "bids",
       userFinalPrice,
@@ -216,119 +191,21 @@ app.post("/order", (req, res) => {
     );
     return;
   }
-
-  const isPriceQtyHigh = compareUserQtyWithPriceQty(
-    userFinalQuantity,
-    availablePrice?.totalQuantity!,
-  );
-
-  if (!isPriceQtyHigh && ioc) {
-    ORDERS.push({
-      id: orderId,
-      createdAt: new Date(),
-      filledQty: 0,
-      qty: userFinalQuantity,
-      userId,
-      price: userFinalPrice,
-      market: "AXIS",
-      side,
-      status: "CANCELLED",
-      type,
-    });
-
-    rejectOrder(res);
-    return;
-  }
-
-  if (!isPriceQtyHigh && type === "MARKET") {
-    ORDERS.push({
-      id: orderId,
-      createdAt: new Date(),
-      filledQty: 0,
-      qty: userFinalQuantity,
-      userId,
-      price: userFinalPrice,
-      market: "AXIS",
-      side,
-      status: "CANCELLED",
-      type,
-    });
-
-    rejectOrder(res);
-    return;
-  }
-
-  const filledQty = userFinalQuantity - availablePrice?.totalQuantity!;
-  const leftQty = userFinalQuantity - filledQty;
-
-  const order =
-    ORDERBOOK[side === "BUY" ? "INR" : "AXIS"][
-      side === "BUY" ? "asks" : "bids"
-    ][userFinalPrice];
-
-  ORDERS.push({
-    id: orderId,
-    createdAt: new Date(),
-    filledQty,
-    qty: userFinalQuantity,
-    userId,
-    price: userFinalPrice,
-    market: "AXIS",
+  
+  order({
+    balances: BALANCES,
+    fills: FILLS,
+    ioc,
+    orderBook: ORDERBOOK,
+    orders: ORDERS,
+    priceQty: availablePrice?.totalQuantity!,
+    res,
     side,
-    status: "FILLED",
     type,
+    userId,
+    userPrice: userFinalPrice,
+    userQty: userFinalQuantity,
   });
-
-  FILLS.push({
-    orderId,
-    // filledQty,
-    // orgQty: userFinalQuantity,
-    asset: "AXIS",
-    createdAt: new Date(),
-    id: crypto.randomUUID(),
-    price: userFinalPrice,
-    qty: userFinalQuantity,
-    side,
-    type: "MAKER",
-    userId
-  });
-  
-  ORDERBOOK[side === "BUY" ? "INR" : "AXIS"][side === "BUY" ? "asks" : "bids"][
-    userFinalPrice
-  ] = {
-    // orders: order?.orders ?? [],
-    totalQuantity: order?.totalQuantity! - filledQty,
-  };
-  
-  if (order?.totalQuantity === 0) {
-    delete ORDERBOOK[side === "BUY" ? "INR" : "AXIS"][
-      side === "BUY" ? "asks" : "bids"
-    ][userFinalPrice];
-  }
-  
-  if (!isPriceQtyHigh && type === "LIMIT") {
-    const availablePrice = checkAvailablePriceInOrderBook(
-      ORDERBOOK,
-      userFinalPrice,
-      side === "BUY" ? "INR" : "AXIS",
-      side === "BUY" ? "asks" : "bids",
-    );
-    
-    const isPriceQtyHigh = compareUserQtyWithPriceQty(
-      leftQty,
-      availablePrice?.totalQuantity!,
-    );
-
-    addNewAsksOrBidsInOrderBook(
-      side === "BUY" ? "asks" : "bids",
-      userFinalPrice,
-      ORDERBOOK,
-      side === "BUY" ? "INR" : "AXIS",
-      leftQty,
-    );    
-  }
-
-  LAST_TRADED_PRICE = userFinalPrice;
 });
 
 app.delete("/order/:orderId", (req, res) => {
