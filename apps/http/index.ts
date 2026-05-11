@@ -97,21 +97,31 @@ app.post("/order", (req, res) => {
 
   const { ioc, side, symbol, type, userId, price, qty } = data;
 
+  const defaultBalance = side === "BUY" ? {
+    total: 10000, // inr
+    locked: 0,
+  } : {
+    total: 20, // stocks
+    locked: 0,
+  }
+  
+  // getting the old balance else the default one
   const userBalance = BALANCES.get(userId)?.[
     side === "BUY" ? "INR" : "AXIS"
-  ] || {
-    total: 10000,
-    locked: 0,
-  };
+  ] || defaultBalance;
+  
+  // new values just for satisfying typescript as price and qty from user can be undefined
   let userFinalPrice = 0;
   let userFinalQuantity = 0;
 
   if (type === "LIMIT") {
+    // limit requires both of the field;
     if (price === undefined || qty === undefined) {
       res.status(403).json({ message: "Invalid inputs" });
       return;
     }
 
+    // basic balance checking (inr or stocks)
     const isBalanceAvailable = compareStockOrCurrencyBalance(
       userBalance,
       side === "BUY" ? price : qty,
@@ -123,16 +133,32 @@ app.post("/order", (req, res) => {
     }
 
     userFinalPrice = price;
-    userBalance.locked += price * qty;
     userFinalQuantity = qty;
+    
+    // locking the amout
+    userBalance.locked += price * qty;
   }
 
   if (type === "MARKET") {
+    // type market requires at least one of them
     if (price === undefined && qty === undefined) {
       res.status(403).json({ message: "Invalid inputs" });
       return;
     }
 
+    /** 
+     * as the user can provide number of stocks or price only 
+     * like
+     * 
+     * if user provide price only
+     * price = 1000
+     * priceOrPriceFromStock = price
+     * 
+     * but if user provids number of stock
+     * stock = 10
+     * price = 10 * LAST_TRADED_PRICE
+     * priceOrPriceFromStock = price
+     */
     let priceOrPriceFromStock = 0;
 
     if (typeof price === "number") {
@@ -145,6 +171,7 @@ app.post("/order", (req, res) => {
       priceOrPriceFromStock = qty * ORDERBOOK["AXIS"].lastTradedPrice;
     }
 
+    // same balance checking as above
     const isBalanceAvailable = compareStockOrCurrencyBalance(
       userBalance,
       priceOrPriceFromStock,
@@ -156,9 +183,10 @@ app.post("/order", (req, res) => {
     }
 
     userFinalPrice = priceOrPriceFromStock;
-    userBalance.locked += priceOrPriceFromStock;
+    userBalance.locked += userFinalPrice;
   }
 
+  // a utility function for all the order matching thing
   const orderRes = order({
     balances: BALANCES,
     fills: FILLS,
@@ -182,6 +210,12 @@ app.post("/order", (req, res) => {
   }
   
   if (orderRes === true) {
+    /**
+     * if its true means order is in orderBook
+     * so locking the user's amount
+     */
+    userBalance.locked += userFinalPrice;
+    
     res.status(201).json({
       message: "order added in orderbook",
     });

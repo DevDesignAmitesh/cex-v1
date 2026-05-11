@@ -22,30 +22,64 @@
 // }
 
 
-import type { Order } from "./types";
+// import type { Order } from "./types";
 
-const ORDERS: Order[] = [
-  {
-    createdAt: new Date(),
-    filledQty: 1,
-    id: "1",
-    qty: 1,
-    userId: "1",
-    price: 1
-  },
-  {
-    createdAt: new Date(),
-    filledQty: 1,
-    id: "2",
-    qty: 1,
-    userId: "2",
-    price: 1
-  },
-]
+// const ORDERS: Order[] = [
+//   {
+//     createdAt: new Date(),
+//     filledQty: 1,
+//     id: "1",
+//     qty: 1,
+//     userId: "1",
+//     price: 1
+//   },
+//   {
+//     createdAt: new Date(),
+//     filledQty: 1,
+//     id: "2",
+//     qty: 1,
+//     userId: "2",
+//     price: 1
+//   },
+// ]
 
-const orderId = "2";
-const userId = "1";
+// const orderId = "2";
+// const userId = "1";
 
-const order = ORDERS.find((ord) => ord.id === orderId && ord.userId === userId);
+// const order = ORDERS.find((ord) => ord.id === orderId && ord.userId === userId);
 
-console.log(order);
+// console.log(order);
+
+// const a = {
+//   1: {
+//     2: {
+      
+//     }
+//   }
+// };
+
+// const b = { ...a }; 
+
+// const c = {
+//   1: {
+
+//   },
+//   2: {
+
+//   }
+// }
+
+// console.log(a)
+// console.log(b)
+
+// async function hello() {};
+
+// function ab(delay: number) {
+//   return new Promise((res) => setTimeout(res, delay))
+// };
+
+// const res = ab(3 * 1000);
+
+// res.then(() => {
+//   console.log("after delay")
+// });
